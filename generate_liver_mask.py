@@ -56,10 +56,6 @@ def generate_liver_mask(
     sup   = np.arange(Z)[:, None, None] >= cz
     inf   = ~sup
 
-    # Segment 1: caudate (posterior, central, superior)
-    seg_map[liver & post & sup &
-            (np.abs(np.arange(X)[None, None, :] - cx) < X * 0.12)] = 1
-
     # Left lobe
     seg_map[left & sup & post] = 2   # Segment 2
     seg_map[left & inf & post] = 3   # Segment 3
@@ -72,6 +68,20 @@ def generate_liver_mask(
     # Right lobe (posterior)
     seg_map[right & post & inf] = 6  # Segment 6
     seg_map[right & post & sup] = 7  # Segment 7
+
+    # Segment 1: caudate (posterior, central, superior). Assign this after
+    # the broad lobe regions so it is not overwritten.
+    caudate = (
+        liver & post & sup &
+        (np.abs(np.arange(X)[None, None, :] - cx) < X * 0.12)
+    )
+    if not caudate.any():
+        caudate = (
+            liver & post &
+            (np.abs(np.arange(Z)[:, None, None] - cz) < max(2, Z * 0.12)) &
+            (np.abs(np.arange(X)[None, None, :] - cx) < max(2, X * 0.16))
+        )
+    seg_map[caudate] = 1
 
     # Fill any unlabeled liver voxels with nearest-neighbor (simple fallback)
     unlabeled = liver & (seg_map == 0)

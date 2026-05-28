@@ -9,7 +9,7 @@ Key differences from the paper-only previous version:
     zstart, zstop, root, children, Qs, section, r) exactly as in C++.
   - Blood-demand map: 4-D uint8 array of shape (Nx, Ny, Nz, 10),
     column-major (Fortran) order. Layers 0-7 = Couinaud segments,
-    layer 8 = overall liver mask (index dims[3]-1 = 9).
+    layer 8 = initial-root sampling support, layer 9 = overall liver mask.
   - Endpoint sampling: rejection sampling via uniform random + blood-demand
     threshold, exactly as in build_tree / create_tree.
   - Section assignment: probabilistic via get_section, exactly as in C++.
@@ -87,12 +87,16 @@ class CppMT19937:
     def _twist(self):
         mag01 = [0, self._MATRIX_A]
         for kk in range(self._N - self._M):
-            y = (self._mt[kk] & self._UPPER_MASK) | (self._mt[kk + 1] & self._LOWER_MASK)
+            y = (self._mt[kk] & self._UPPER_MASK) | (
+                self._mt[kk + 1] & self._LOWER_MASK)
             self._mt[kk] = self._mt[kk + self._M] ^ (y >> 1) ^ mag01[y & 1]
         for kk in range(self._N - self._M, self._N - 1):
-            y = (self._mt[kk] & self._UPPER_MASK) | (self._mt[kk + 1] & self._LOWER_MASK)
-            self._mt[kk] = self._mt[kk + (self._M - self._N)] ^ (y >> 1) ^ mag01[y & 1]
-        y = (self._mt[self._N - 1] & self._UPPER_MASK) | (self._mt[0] & self._LOWER_MASK)
+            y = (self._mt[kk] & self._UPPER_MASK) | (
+                self._mt[kk + 1] & self._LOWER_MASK)
+            self._mt[kk] = self._mt[kk +
+                                    (self._M - self._N)] ^ (y >> 1) ^ mag01[y & 1]
+        y = (self._mt[self._N - 1] &
+             self._UPPER_MASK) | (self._mt[0] & self._LOWER_MASK)
         self._mt[self._N - 1] = self._mt[self._M - 1] ^ (y >> 1) ^ mag01[y & 1]
         self._index = 0
 
@@ -420,6 +424,13 @@ def create_tree(xstart, xstop, ystart, ystop, zstart, zstop,
                 found_pt = True
             region += 1
         sctn = order[(region - 1) % 8]  # 1-indexed Couinaud segment
+
+        if connected_pts < 20 or connected_pts % progress_interval == 0:
+            print(
+                f"[grow] searching endpoint {connected_pts + 1}/{terminal_pts} "
+                f"in segment {sctn} with {count} branches",
+                flush=False,
+            )
 
         # let initial tree form before counting attempts
         if count > 50:
@@ -1047,6 +1058,26 @@ def build_tree(Nx, Ny, Nz, terminal_pts, tree_number,
     perf = np.fromfile(perf_path, dtype=np.uint8, count=n_voxels)
     if len(perf) != n_voxels:
         raise IOError(f"Expected {n_voxels} bytes, got {len(perf)}")
+    layer_voxels = [
+        int(np.count_nonzero(
+            perf[layer * Nx * Ny * Nz:(layer + 1) * Nx * Ny * Nz]))
+        for layer in range(10)
+    ]
+    required_layers = list(range(9)) + [dims[3] - 1]
+    empty_required = [
+        layer for layer in required_layers if layer_voxels[layer] == 0]
+    if empty_required:
+        raise ValueError(
+            "Phantom.dat has empty required layer(s) "
+            + ", ".join(str(layer) for layer in empty_required)
+            + ". Regenerate Phantom.dat; the generator would otherwise wait forever sampling."
+        )
+    print(
+        "Phantom nonzero voxels by layer: "
+        + ", ".join(f"{idx}:{value}" for idx,
+                    value in enumerate(layer_voxels)),
+        flush=True,
+    )
 
     factor = 1.2
     arrayAlloc = math.ceil(terminal_pts * 2 * factor) + 10
@@ -1069,6 +1100,7 @@ def build_tree(Nx, Ny, Nz, terminal_pts, tree_number,
 
     # --- initial branch: segment 8 start → segment 3 stop ---
     init_secs = [8, 3]  # 0-indexed segment layers
+    print("Sampling initial root branch endpoints...", flush=True)
     for pos in range(2):
         found = False
         while not found:
@@ -1090,6 +1122,7 @@ def build_tree(Nx, Ny, Nz, terminal_pts, tree_number,
                 found = True
 
     # --- one endpoint per segment ---
+    print("Sampling required first endpoint for each Couinaud segment...", flush=True)
     for pos in range(min(seg_number, terminal_pts)):
         found = False
         while not found:
@@ -1104,6 +1137,8 @@ def build_tree(Nx, Ny, Nz, terminal_pts, tree_number,
                 found = True
 
     # --- remaining endpoints sampled uniformly + section-tagged ---
+    print(
+        f"Sampling remaining {max(terminal_pts - seg_number, 0)} endpoints...", flush=True)
     pos = seg_number
     while pos < terminal_pts:
         found = False
@@ -1126,7 +1161,8 @@ def build_tree(Nx, Ny, Nz, terminal_pts, tree_number,
             pos += 1
 
     # --- grow tree ---
-    print(f"Building Tree {tree_number} with {terminal_pts} points", flush=True)
+    print(
+        f"Building Tree {tree_number} with {terminal_pts} points", flush=True)
     count = create_tree(
         xstart, xstop, ystart, ystop, zstart, zstop,
         root_arr, section, length, Qs, V,
@@ -1205,7 +1241,8 @@ if __name__ == "__main__":
         scale = (1.3 + 1.0*base_rng.random()) * \
             (initial_res / args.phantom_res)
         print(
-            f"\n=== Tree {i}/{args.trees}  seed={seed_i}  scale={scale:.4f} ===")
+            f"\n=== Tree {i}/{args.trees}  seed={seed_i}  scale={scale:.4f} ===",
+            flush=True)
         ret = build_tree(args.Nx, args.Ny, args.Nz,
                          args.endpoints, i,
                          scale, seed_i,

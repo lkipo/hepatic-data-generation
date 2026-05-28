@@ -10,6 +10,7 @@
 #
 # Usage:
 #   bash datagen_pipeline/run_pipeline.sh [N_SAMPLES] [OUT_DIR]
+#   MAX_JOBS=4 bash datagen_pipeline/run_pipeline.sh [N_SAMPLES] [OUT_DIR]
 
 set -euo pipefail
 
@@ -29,6 +30,12 @@ N_ENDPOINTS=${N_ENDPOINTS:-2000}
 PHANTOM_RES=${PHANTOM_RES:-${VOXEL_SIZE}}
 DESIRED_RES=${DESIRED_RES:-${VOXEL_SIZE}}
 PROGRESS_INTERVAL=${PROGRESS_INTERVAL:-0}
+MAX_JOBS=${MAX_JOBS:-1}
+
+if ! [[ "${MAX_JOBS}" =~ ^[0-9]+$ ]] || [ "${MAX_JOBS}" -lt 1 ]; then
+    echo "MAX_JOBS must be a positive integer." >&2
+    exit 1
+fi
 
 mkdir -p "${INPUT_DIR}" "${OUT_DIR}"
 
@@ -62,8 +69,10 @@ STEP_START=${SECONDS}
 echo "    Phantom.dat complete in $((SECONDS - STEP_START))s"
 
 echo "=== Generating ${N_SAMPLES} hepatic vessel samples ==="
+echo "    parallel sample jobs: ${MAX_JOBS}"
 
-for i in $(seq -w 1 ${N_SAMPLES}); do
+run_sample() {
+    local i="$1"
     SAMPLE_DIR="${OUT_DIR}/sample_${i}"
     mkdir -p "${SAMPLE_DIR}"
 
@@ -107,7 +116,28 @@ for i in $(seq -w 1 ${N_SAMPLES}); do
     echo "    raw simulation complete in $((SECONDS - STEP_START))s"
 
     echo "    -> ${SAMPLE_DIR}/ complete in $((SECONDS - SAMPLE_START))s"
+}
+
+pids=""
+for i in $(seq -w 1 ${N_SAMPLES}); do
+    while [ "$(jobs -pr | wc -l | tr -d ' ')" -ge "${MAX_JOBS}" ]; do
+        sleep 1
+    done
+    run_sample "${i}" &
+    pids="${pids} $!"
 done
+
+status=0
+for pid in ${pids}; do
+    if ! wait "${pid}"; then
+        status=1
+    fi
+done
+
+if [ "${status}" -ne 0 ]; then
+    echo "One or more sample generation jobs failed." >&2
+    exit "${status}"
+fi
 
 echo ""
 echo "=== Done. Dataset at: ${OUT_DIR}/ ==="

@@ -44,6 +44,12 @@ Progress is printed during tree growth. By default the generator reports about
 every 1% of connected endpoints; set `PROGRESS_INTERVAL=25` when running
 `run_pipeline.sh` to report every 25 connected endpoints.
 
+Multiple samples can run in parallel with `MAX_JOBS`, for example:
+
+```bash
+MAX_JOBS=4 bash datagen_pipeline/run_pipeline.sh 12
+```
+
 ---
 
 ## Step 3 — Convert tree text → DVN volumetric channels
