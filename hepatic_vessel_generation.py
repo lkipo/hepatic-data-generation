@@ -432,9 +432,9 @@ def create_tree(xstart, xstop, ystart, ystop, zstart, zstop,
                 flush=False,
             )
 
-        # let initial tree form before counting attempts
-        if count > 50:
-            point[3] += 1
+        # Count retries from the beginning so a bad early endpoint cannot
+        # spin forever in a synthetic phantom.
+        point[3] += 1
 
         # ---- compute cost for each branch ----
         for pos in range(count):
